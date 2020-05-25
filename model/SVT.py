@@ -242,7 +242,7 @@ class CvaeTrans(nn.Module):
         #     self.emo = SoftmaxOutputLayer(config.hidden_dim,emo_number)
         #     self.emo_criterion = nn.NLLLoss()
         
-        if model_file_path is not None:
+        if model_file_path:
             print("loading weights")
             state = torch.load(model_file_path, map_location= lambda storage, location: storage)
             self.encoder.load_state_dict(state['encoder_state_dict'])

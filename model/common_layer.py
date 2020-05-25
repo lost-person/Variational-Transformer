@@ -2,24 +2,28 @@
 ## MINOR CHANGES
 # import matplotlib
 # matplotlib.use('Agg')
+import math
+import operator
+import os
+import pprint
+from functools import reduce
+
+import nltk
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
 import torch.nn.init as I
-import numpy as np
-import math
-import os
-from utils import config
-from utils.metric import rouge, moses_multi_bleu, _prec_recall_f1_score, compute_prf, compute_exact_match
-import pprint
-from tqdm import tqdm
-pp = pprint.PrettyPrinter(indent=1)
-import numpy as np
-import nltk
 from nltk.util import ngrams
-from functools import reduce
-import operator
+from torch.autograd import Variable
+from tqdm import tqdm
+
+from utils import config
+from utils.metric import (_prec_recall_f1_score, compute_exact_match,
+                          compute_prf, convert_list_id2embed, embedding_metric,
+                          moses_multi_bleu, rouge)
+
+pp = pprint.PrettyPrinter(indent=1)
 #from beam_omt import Translator
 # import matplotlib.pyplot as plt
 
@@ -816,8 +820,10 @@ def get_input_from_batch(batch):
     enc_batch = batch["input_batch"]
     enc_lens = batch["input_lengths"]
     batch_size, max_enc_len = enc_batch.size()
-    assert len(enc_lens) == batch_size
+    # assert len(enc_lens) == batch_size
 
+    if config.dataset in ['cornell', 'ubuntu']:
+        max_enc_len = enc_lens.data.max().item()
     enc_padding_mask = sequence_mask(enc_lens, max_len=max_enc_len).float()
 
     extra_zeros = None
@@ -959,7 +965,9 @@ def evaluate_tra(model, data,  ty='train', max_dec_step=50):
             break 
     print("end print training samples")
     print("+++++++++++++++++++++++++++++++++++++++++")
-def evaluate(model, data,  ty='valid', max_dec_step=50):
+
+
+def evaluate(model, data, word2embed, ty='valid', max_dec_step=50):
     model.__id__logger = 0
     dial = []
     ref, hyp_g= [],[]
@@ -980,35 +988,53 @@ def evaluate(model, data,  ty='valid', max_dec_step=50):
         bow.append(bow_prog)
         elbo.append(elbo_prog)
         if(ty =="test" or (ty =="valid" and j< 3)): 
-            sent_g = model.decoder_greedy(batch,max_dec_step=max_dec_step)
+            sent_g = model.decoder_greedy(batch, max_dec_step=max_dec_step)
  
             for i, greedy_sent in enumerate(sent_g):
                 rf = " ".join(batch["target_txt"][i])
                 hyp_g.append(greedy_sent)
                 ref.append(rf)
-                print_custum(emotion= batch["program_txt"][i],
-                            dial=[" ".join(s) for s in batch['input_txt'][i]] if config.dataset=="empathetic" else " ".join(batch['input_txt'][i]),
+                print_custum(emotion= batch["program_txt"][i] if config.dataset not in ['cornell', 'ubuntu'] else '',
+                            # dial=[" ".join(s) for s in batch['input_txt'][i]] if config.dataset=="empathetic" else " ".join(batch['input_txt'][i]),
+                            dial=[" ".join(s) for s in batch['input_txt'][i]] if config.dataset!="emojitalk" else " ".join(batch['input_txt'][i]),
                             ref=rf,
                             hyp_g=greedy_sent)   
 
         else:
             continue
         pbar.set_description("loss:{:.4f} ppl:{:.1f}".format(np.mean(l),math.exp(np.mean(l))))
+    
+    # loss
     loss = np.mean(l)
     ppl = np.mean(p)
     kld = np.mean(kld)
     bow = np.mean(bow)
     elbo = np.mean(elbo)
+    
     bleu_score_g = moses_multi_bleu(np.array(hyp_g), np.array(ref), lowercase=True)
-    # bleu_score_b = moses_multi_bleu(np.array(hyp_b), np.array(ref), lowercase=True)
+    
+    # embedding metric
+    ref_emb_list = convert_list_id2embed(ref, word2embed)
+    hyp_emb_list = convert_list_id2embed(hyp_g, word2embed)
+    indices = [i for i, r, h in zip(range(len(ref_emb_list)), ref_emb_list, hyp_emb_list) if r != [] and h != []]
+    ref_emb_list = [ref_emb_list[i] for i in indices]
+    hyp_emb_list = [hyp_emb_list[i] for i in indices]
+    average = embedding_metric(ref_emb_list, hyp_emb_list, method='average')
+    greedy = embedding_metric(ref_emb_list, hyp_emb_list, method='greedy')
+    extrema = embedding_metric(ref_emb_list, hyp_emb_list, method='extrema')
+    
+    # distinct
     gd1,gd2,gd3 = distinct_k(hyp_g)
     rd1,rd2,rd3 = distinct_k(ref)
     
     print("rd1:{},rd2:{},rd3:{}".format(rd1,rd2,rd3))
-    print("EVAL\tLoss\tPPL\tBleu_g\td1\td2\td3")
-    print("{}\t{:.4f}\t{:.4f}\t{:.2f}\t{:.4f}\t{:.4f}\t{:.4f}".format(ty,loss,math.exp(loss), bleu_score_g, gd1,gd2,gd3))
+    # print("EVAL\tLoss\tPPL\tBleu_g\td1\td2\td3")
+    # print("{}\t{:.4f}\t{:.4f}\t{:.2f}\t{:.4f}\t{:.4f}\t{:.4f}".format(ty,loss,math.exp(loss), bleu_score_g, gd1,gd2,gd3))
+    print("EVAL\tLoss\tPPL\tBleu_g\tAverage\tGreedy\Extrema\td1\td2\td3")
+    print("{}\t{:.4f}\t{:.4f}\t{:.2f}\t{:.4f}\t{:.4f}\t{:.4f}\t{:4f}\t{:4f}\t{:4f}".format(
+        ty,loss, math.exp(loss), bleu_score_g, average, greedy, extrema, gd1, gd2, gd3))
     
-    return loss, math.exp(loss), kld, bow, elbo, bleu_score_g, gd1,gd2,gd3
+    return loss, math.exp(loss), kld, bow, elbo, bleu_score_g, average, greedy, extrema, gd1, gd2, gd3
 
 
 def get_kld(model, data,  ty='valid', max_dec_step=50):
@@ -1085,3 +1111,17 @@ def top_k_top_p_filtering(logits, top_k=0, top_p=0, filter_value=-float('Inf')):
     return logits
 
 
+def pad(tensor, length):
+    if isinstance(tensor, Variable):
+        var = tensor
+        if length > var.size(0):
+            return torch.cat([var,
+                              torch.zeros(length - var.size(0), *var.size()[1:]).cuda()])
+        else:
+            return var
+    else:
+        if length > tensor.size(0):
+            return torch.cat([tensor,
+                              torch.zeros(length - tensor.size(0), *tensor.size()[1:]).cuda()])
+        else:
+            return tensor

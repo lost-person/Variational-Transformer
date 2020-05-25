@@ -19,10 +19,12 @@ import subprocess
 import tempfile
 import numpy as np
 from collections import Counter
+import pickle
 from six.moves import urllib
 import json
 import os
 from utils.nlp import normalize
+from gensim.models import KeyedVectors
 
 def wer(r, h):
     """
@@ -96,11 +98,11 @@ def moses_multi_bleu(hypotheses, references, lowercase=False):
 
 
     # Dump hypotheses and references to tempfiles
-    hypothesis_file = tempfile.NamedTemporaryFile()
+    hypothesis_file = tempfile.NamedTemporaryFile(delete=False)
     hypothesis_file.write("\n".join(hypotheses).encode("utf-8"))
     hypothesis_file.write(b"\n")
     hypothesis_file.flush()
-    reference_file = tempfile.NamedTemporaryFile()
+    reference_file = tempfile.NamedTemporaryFile(delete=False)
     reference_file.write("\n".join(references).encode("utf-8"))
     reference_file.write(b"\n")
     reference_file.flush()
@@ -113,9 +115,12 @@ def moses_multi_bleu(hypotheses, references, lowercase=False):
             bleu_cmd += ["-lc"]
         bleu_cmd += [reference_file.name]
         try:
-            bleu_out = subprocess.check_output(bleu_cmd, stdin=read_pred, stderr=subprocess.STDOUT)
-            bleu_out = bleu_out.decode("utf-8")
-            bleu_score = re.search(r"BLEU = (.+?),", bleu_out).group(1)
+            # bleu_out = subprocess.check_output(bleu_cmd, stdin=read_pred, stderr=subprocess.STDOUT)
+            # bleu_out = bleu_out.decode("utf-8")
+            bleu_cmd  = "perl {} {} < {} > {}".format(multi_bleu_path, reference_file.name, hypothesis_file.name, "temp")
+            os.system(bleu_cmd)
+            bleu_score_report = open("temp", "r").read()
+            bleu_score = re.search(r"BLEU = (.+?),", bleu_score_report).group(1)
             bleu_score = float(bleu_score)
         except subprocess.CalledProcessError as error:
             if error.output is not None:
@@ -560,3 +565,105 @@ def get_global_entity_KVR():
                   global_entity_list += [item[k].lower().replace(' ', '_') for k in item.keys()]
       global_entity_list = list(set(global_entity_list))
   return global_entity_list
+
+
+def mapping_word2emb(word2vec_path, vocab_path, embedding_path, lang='en'):
+    """
+    load word embedding
+
+    Args:
+        word2vec_path: str, path of look-up embedding
+        vocab_path: str path of vocabulary
+        embedding_path: str path of pretrained word embedding
+        lang: str language of pretrained word embedding
+    """
+    if lang == 'en':
+        model = KeyedVectors.load_word2vec_format(word2vec_path, binary=True)
+    else:
+        model = KeyedVectors.load_word2vec_format(word2vec_path)
+
+    with open(vocab_path, 'r', encoding='utf-8') as f:
+      vocab = f.readlines()
+    keys = model.vocab
+    
+    word_dim = model.vector_size
+    word2embed = {word: model[word] for word in vocab if word in keys}
+    
+    pickle.dump(embedding_path, word2embed)
+
+
+def convert_list_id2embed(sequence_list, word2embed: dict):
+    """
+    convert batch sequence's idx to embedding
+    Args:
+        seq_id_list: tensor batch sequence' word index, [batch_size, max_seq_len]
+        word2embed: tensor word embedding [vocab_size, embed_dim]
+    """
+    
+    def convert_word2embed(token_list, word2embed, keys):
+        """
+        convert list of token id to embedding
+        Args:
+            id_list: tensor sequence' word, [max_seq_len]
+            word2embed: tensor word embedding [vocab_size, embed_dim]
+        """
+        _embed_list = []
+        for token in token_list:
+            if token in keys:
+                _embed_list.append(word2embed[token])
+        return _embed_list
+    
+    keys = word2embed.keys()
+    embed_list = [convert_word2embed(sequence.split(' '), word2embed, keys) for sequence in sequence_list]
+    return embed_list
+
+
+def cosine_similarity(s, g):
+    similarity = np.sum(s * g, axis=1) / np.sqrt((np.sum(s * s, axis=1) * np.sum(g * g, axis=1)))
+
+    # return np.sum(similarity)
+    return similarity
+
+
+def embedding_metric(ground_truth, samples, method='average'):
+    if not ground_truth or not samples:
+        return 0.0
+
+    if method == 'average':
+        # s, g: [n_samples, word_dim]
+        s = [np.mean(sample, axis=0) for sample in samples]
+        g = [np.mean(gt, axis=0) for gt in ground_truth]
+        return np.mean(cosine_similarity(np.array(s), np.array(g)))
+    elif method == 'extrema':
+        s_list = []
+        g_list = []
+        for sample, gt in zip(samples, ground_truth):
+            s_max = np.max(sample, axis=0)
+            s_min = np.min(sample, axis=0)
+            s_plus = np.absolute(s_min) <= s_max
+            s_abs = np.max(np.absolute(sample), axis=0)
+            s = s_max * s_plus + s_min * np.logical_not(s_plus)
+            s_list.append(s)
+
+            g_max = np.max(gt, axis=0)
+            g_min = np.min(gt, axis=0)
+            g_plus = np.absolute(g_min) <= g_max
+            g_abs = np.max(np.absolute(gt), axis=0)
+            g = g_max * g_plus + g_min * np.logical_not(g_plus)
+            g_list.append(g)
+
+        return np.mean(cosine_similarity(np.array(s_list), np.array(g_list)))
+    elif method == 'greedy':
+        sim_list = []
+        for s, g in zip(samples, ground_truth):
+            s = np.array(s)
+            g = np.array(g).T
+            sim = (np.matmul(s, g)
+                   / np.sqrt(np.matmul(np.sum(s * s, axis=1, keepdims=True), np.sum(g * g, axis=0, keepdims=True))))
+            sim = np.max(sim, axis=0)
+            sim_list.append(np.mean(sim))
+
+        # return np.sum(sim_list)
+        return np.mean(np.array(sim_list))
+    else:
+        raise NotImplementedError

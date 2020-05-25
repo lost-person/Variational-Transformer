@@ -48,20 +48,20 @@ def read_langs(vocab):
     # modify the default parameters of np.load
     np.load = lambda *a,**k: np_load_old(*a, allow_pickle=True, **k)
     
-    train_context = np.load('data/empathetic-dialogue/sys_dialog_texts.train.npy')
-    train_target = np.load('data/empathetic-dialogue/sys_target_texts.train.npy')
-    train_emotion = np.load('data/empathetic-dialogue/sys_emotion_texts.train.npy')
-    train_situation = np.load('data/empathetic-dialogue/sys_situation_texts.train.npy')
+    train_context = np.load('./data/empathetic-dialogue/sys_dialog_texts.train.npy')
+    train_target = np.load('./data/empathetic-dialogue/sys_target_texts.train.npy')
+    train_emotion = np.load('./data/empathetic-dialogue/sys_emotion_texts.train.npy')
+    train_situation = np.load('./data/empathetic-dialogue/sys_situation_texts.train.npy')
 
-    dev_context = np.load('data/empathetic-dialogue/sys_dialog_texts.dev.npy')
-    dev_target = np.load('data/empathetic-dialogue/sys_target_texts.dev.npy')
-    dev_emotion = np.load('data/empathetic-dialogue/sys_emotion_texts.dev.npy')
-    dev_situation = np.load('data/empathetic-dialogue/sys_situation_texts.dev.npy')
+    dev_context = np.load('./data/empathetic-dialogue/sys_dialog_texts.dev.npy')
+    dev_target = np.load('./data/empathetic-dialogue/sys_target_texts.dev.npy')
+    dev_emotion = np.load('./data/empathetic-dialogue/sys_emotion_texts.dev.npy')
+    dev_situation = np.load('./data/empathetic-dialogue/sys_situation_texts.dev.npy')
     
-    test_context = np.load('data/empathetic-dialogue/sys_dialog_texts.test.npy')
-    test_target = np.load('data/empathetic-dialogue/sys_target_texts.test.npy')
-    test_emotion = np.load('data/empathetic-dialogue/sys_emotion_texts.test.npy')
-    test_situation = np.load('data/empathetic-dialogue/sys_situation_texts.test.npy')
+    test_context = np.load('./data/empathetic-dialogue/sys_dialog_texts.test.npy')
+    test_target = np.load('./data/empathetic-dialogue/sys_target_texts.test.npy')
+    test_emotion = np.load('./data/empathetic-dialogue/sys_emotion_texts.test.npy')
+    test_situation = np.load('./data/empathetic-dialogue/sys_situation_texts.test.npy')
 
     data_train = {'context':[],'target':[],'emotion':[], 'situation':[]}
     data_dev = {'context':[],'target':[],'emotion':[], 'situation':[]}
@@ -126,7 +126,7 @@ def read_langs(vocab):
     return data_train, data_dev, data_test, vocab
 
 def read_langs_persona(data_train, data_valid, data_test, vocab):
-    with open('data/Persona/train_self_original.txt',encoding='utf-8') as f_train:
+    with open('./data/Persona/train_self_original.txt',encoding='utf-8') as f_train:
         context = deque([], maxlen=3)
         for line in f_train:
             line = line.strip()
@@ -146,7 +146,7 @@ def read_langs_persona(data_train, data_valid, data_test, vocab):
             else:
                 context = deque([], maxlen=3)
     
-    with open('data/Persona/valid_self_original.txt',encoding='utf-8') as f_valid:
+    with open('./data/Persona/valid_self_original.txt',encoding='utf-8') as f_valid:
         context = deque([], maxlen=3)
         for line in f_valid:
             line = line.strip()
@@ -166,7 +166,7 @@ def read_langs_persona(data_train, data_valid, data_test, vocab):
             else:
                 context = deque([], maxlen=3)
     
-    with open('data/Persona/test_self_original.txt',encoding='utf-8') as f_test:
+    with open('./data/Persona/test_self_original.txt',encoding='utf-8') as f_test:
         context = deque([], maxlen=3)
         for line in f_test:
             line = line.strip()
@@ -189,9 +189,9 @@ def read_langs_persona(data_train, data_valid, data_test, vocab):
     return data_train, data_valid, data_test, vocab
 
 def load_dataset():
-    if(os.path.exists('data/persona_ed/dataset_preproc.p')):
+    if(os.path.exists('./data/persona_ed/dataset_preproc.p')):
         print("LOADING persona_ed")
-        with open('data/persona_ed/dataset_preproc.p', "rb") as f:
+        with open('./data/persona_ed/dataset_preproc.p', "rb") as f:
             [data_tra, data_val, data_tst, vocab] = pickle.load(f)
     else:
         print("Building dataset...")
@@ -200,7 +200,7 @@ def load_dataset():
          23: 'key_anxious', 24: 'key_disappointed', 25: 'key_joyful', 26: 'key_prepared', 27: 'key_guilty', 28: 'key_furious', 29: 'key_nostalgic', 30: 'key_jealous', 31: 'key_anticipating', 32: 'key_embarrassed', 33: 'key_content', 34: 'key_devastated', 35: 'key_sentimental', 36: 'key_caring', 37: 'key_trusting', 38: 'key_ashamed', 39: 'key_apprehensive', 40: 'key_faithful'})) 
         data_tra, data_val, data_tst, vocab = read_langs_persona(data_tra, data_val, data_tst, vocab)
         
-        with open('data/persona_ed/dataset_preproc.p', "wb") as f:
+        with open('./data/persona_ed/dataset_preproc.p', "wb") as f:
             pickle.dump([data_tra, data_val, data_tst, vocab], f)
             print("Saved PICKLE")
             

@@ -17,8 +17,14 @@ else:
     USE_CUDA = False
 
 parser = argparse.ArgumentParser()
+parser.add_argument("--n_epoch", type=int, default=30)
 parser.add_argument("--dataset", type=str, default="mojitalk")
+parser.add_argument("--max_conv_len", type=int, default=10)
+parser.add_argument("--max_seq_len", type=int, default=20)
 parser.add_argument("--v2", action="store_true")
+parser.add_argument("--v3", action="store_true")
+parser.add_argument("--v4", action="store_true")
+parser.add_argument("--bidirectional", action="store_true")
 parser.add_argument("--hidden_dim", type=int, default=300)
 parser.add_argument("--emb_dim", type=int, default=300)
 parser.add_argument("--batch_size", type=int, default=32)
@@ -83,6 +89,8 @@ arg = parser.parse_args()
 print_opts(arg)
 model = arg.model
 dataset = arg.dataset
+max_conv_len = arg.max_conv_len
+max_seq_len = arg.max_seq_len
 large_decoder = arg.large_decoder
 topk = arg.topk
 l1 = arg.l1
@@ -96,6 +104,7 @@ schedule = arg.schedule
 hidden_dim= arg.hidden_dim
 emb_dim= arg.emb_dim
 batch_size= arg.batch_size
+bidirectional= arg.bidirectional
 lr=arg.lr
 beam_size=arg.beam_size
 project=arg.project
@@ -130,6 +139,7 @@ depth = arg.depth
 filter = arg.filter
 
 v2 = arg.v2
+v3 = arg.v3
 num_var_layers = arg.num_var_layers
 kl_ceiling = arg.kl_ceiling
 aux_ceiling = arg.aux_ceiling
