@@ -17,7 +17,6 @@ else:
     USE_CUDA = False
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--n_epoch", type=int, default=30)
 parser.add_argument("--dataset", type=str, default="mojitalk")
 parser.add_argument("--max_conv_len", type=int, default=10)
 parser.add_argument("--max_seq_len", type=int, default=20)
