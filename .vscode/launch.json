@@ -1,0 +1,27 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: 当前文件",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": [
+                "--dataset", "cornell",
+                "--model", "cvaetrs",
+                "--full_kl_step", "12000",
+                "--save_path", "./save/MGVT",
+                "--batch_size", "16",
+                "--save_path_pretrained", "",
+                "--num_var_layers", "1",
+                "--bidirectional",
+                "--cuda",
+                "--v3"
+            ]
+        }
+    ]
+}
