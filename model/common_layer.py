@@ -21,7 +21,7 @@ from tqdm import tqdm
 from utils import config
 from utils.metric import (_prec_recall_f1_score, compute_exact_match,
                           compute_prf, convert_list_id2embed, embedding_metric,
-                          moses_multi_bleu, rouge)
+                          moses_multi_bleu, rouge, save_preds)
 
 pp = pprint.PrettyPrinter(indent=1)
 #from beam_omt import Translator
@@ -970,7 +970,7 @@ def evaluate_tra(model, data,  ty='train', max_dec_step=50):
 def evaluate(model, data, word2embed, ty='valid', max_dec_step=50):
     model.__id__logger = 0
     dial = []
-    ref, hyp_g= [],[]
+    dial, ref, hyp_g = [], [], []
     if ty=="test":
         print("testing generation:")
     #t = Translator(model, model.vocab)
@@ -991,19 +991,26 @@ def evaluate(model, data, word2embed, ty='valid', max_dec_step=50):
             sent_g = model.decoder_greedy(batch, max_dec_step=max_dec_step)
  
             for i, greedy_sent in enumerate(sent_g):
+                if config.dataset != 'mojitalk':
+                    dia = " <eou> ".join([" ".join(s) for s in batch['input_txt'][i]])
+                else:
+                    dia = " ".join(batch['input_txt'][i])
+                dial.append(dia)
                 rf = " ".join(batch["target_txt"][i])
                 hyp_g.append(greedy_sent)
                 ref.append(rf)
-                print_custum(emotion= batch["program_txt"][i] if config.dataset not in ['cornell', 'ubuntu'] else '',
-                            # dial=[" ".join(s) for s in batch['input_txt'][i]] if config.dataset=="empathetic" else " ".join(batch['input_txt'][i]),
-                            dial=[" ".join(s) for s in batch['input_txt'][i]] if config.dataset!="emojitalk" else " ".join(batch['input_txt'][i]),
-                            ref=rf,
-                            hyp_g=greedy_sent)   
+                # print_custum(emotion= batch["program_txt"][i] if config.dataset not in ['cornell', 'ubuntu'] else '',
+                #             # dial=[" ".join(s) for s in batch['input_txt'][i]] if config.dataset=="empathetic" else " ".join(batch['input_txt'][i]),
+                #             dial=[" ".join(s) for s in batch['input_txt'][i]] if config.dataset!="emojitalk" else " ".join(batch['input_txt'][i]),
+                #             ref=rf,
+                #             hyp_g=greedy_sent)
 
         else:
             continue
         pbar.set_description("loss:{:.4f} ppl:{:.1f}".format(np.mean(l),math.exp(np.mean(l))))
     
+    save_preds(os.path.join(config.save_path, 'pred.txt'), dial, ref, hyp_g)
+
     # loss
     loss = np.mean(l)
     ppl = np.mean(p)

@@ -3,6 +3,8 @@ from utils import config
 from model.seq2seq import SeqToSeq
 if config.v2:
     from model.SVT import CvaeTrans
+elif config.v3:
+    from model.MGVT import CvaeTrans
 else:
     from model.GVT import CvaeTrans
 from model.common_layer import evaluate,evaluate_tra, count_parameters, make_infinite, get_kld
@@ -15,6 +17,7 @@ from tqdm import tqdm
 import os
 import time 
 import numpy as np
+import pickle
 import math
 from tensorboardX import SummaryWriter
 
@@ -68,6 +71,9 @@ try:
     writer = SummaryWriter(log_dir=config.save_path)
     weights_best = deepcopy(model.state_dict())
     data_iter = make_infinite(data_loader_tra)
+    word2emb = pickle.load(open(os.path.join('./data', config.dataset, 'word2embed.pkl'), 'rb'))
+    opt_loss, early_stop = float('inf'), 0
+    
     for n_iter in tqdm(range(1000000)):
         if config.gradient_accumulation_steps>1:
             loss, ppl, kld, bow, elbo = model.train_n_batch([next(data_iter) for i in range(config.gradient_accumulation_steps)],n_iter)
@@ -86,12 +92,30 @@ try:
             model.epoch = n_iter
             model.__id__logger = 0
             #evaluate_tra(model, data_loader_tra ,ty="valid", max_dec_step=50)
-            loss_val, ppl_val, kld_val, bow_val, elbo_val, bleu_score_g, d1,d2,d3= evaluate(model, data_loader_val ,ty="valid", max_dec_step=50)
+            loss_val, ppl_val, kld_val, bow_val, elbo_val, bleu_score_g, average, greedy, extrema, d1, d2, d3= evaluate(
+                model, data_loader_val, word2emb, ty="valid", max_dec_step=20)
+
+            if opt_loss < loss_val:
+                early_stop += 1
+            else:
+                early_stop = 0
+            
+            if early_stop >= 5:
+                print("Early Stop")
+                break
+
             writer.add_scalars('loss', {'loss_valid': loss_val}, n_iter)
             writer.add_scalars('ppl', {'ppl_valid': ppl_val}, n_iter)
             writer.add_scalars('kld', {'kld_valid': kld_val}, n_iter)
             writer.add_scalars('bow', {'bow_valid': bow_val}, n_iter)
             writer.add_scalars('elbo', {'elbo_valid': elbo_val}, n_iter)
+            writer.add_scalars('bleu', {'bleu_valid': bleu_score_g}, n_iter)
+            writer.add_scalars('average', {'average_valid': average}, n_iter)
+            writer.add_scalars('greedy', {'greedy_valid': greedy}, n_iter)
+            writer.add_scalars('extrema', {'extrema_valid': extrema}, n_iter)
+            writer.add_scalars('d1', {'d1_valid': d1}, n_iter)
+            writer.add_scalars('d2', {'d2_valid': d2}, n_iter)
+            writer.add_scalars('d3', {'d3_valid': d3}, n_iter)
             model = model.train()
             best_elbo = elbo_val
             model.save_model(best_elbo,n_iter,ppl_val ,0,bleu_score_g,kld_val)
@@ -120,10 +144,13 @@ except KeyboardInterrupt:
 model.load_state_dict({ name: weights_best[name] for name in weights_best })
 model.eval()
 model.epoch = 100
-loss_test, ppl_test, kld_test, bow_test, elbo_test, bleu_score_g, d1,d2,d3 = evaluate(model, data_loader_tst ,ty="test", max_dec_step=50)
+loss_test, ppl_test, kld_test, bow_test, elbo_test, bleu_score_g, average, greedy, extrema, d1, d2, d3 = evaluate(
+    model, data_loader_tst, ty="test", max_dec_step=20)
 
 file_summary = config.save_path+"summary.txt"
 with open(file_summary, 'w') as the_file:
-    the_file.write("EVAL\tLoss\tPPL\tKLD\tELBO\tBleu_g\td1\td2\td3\n")
-    the_file.write("{}\t{:.4f}\t{:.4f}\t{:.4f}\t{:.4f}\t{:.4f}\t{:.4f}\t{:.4f}\t{:.4f}\n".format("test",loss_test,ppl_test,kld_test, elbo_test,bleu_score_g,d1,d2,d3))
+    the_file.write("EVAL\tLoss\tPPL\tKLD\tELBO\tBleu_g\tAverage\tGreedy\Extrema\td1\td2\td3\n")
+    the_file.write("{}\t{:.4f}\t{:.4f}\t{:.4f}\t{:.4f}\t{:.4f}\t{:.4f}\t{:.4f}\t{:.4f}\n".format(
+        "test", loss_test, ppl_test, kld_test, elbo_test, bleu_score_g, average, greedy, extrema, 
+        d1, d2, d3))
     

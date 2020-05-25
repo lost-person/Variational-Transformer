@@ -99,10 +99,12 @@ def moses_multi_bleu(hypotheses, references, lowercase=False):
 
     # Dump hypotheses and references to tempfiles
     hypothesis_file = tempfile.NamedTemporaryFile(delete=False)
+    # hypothesis_file = tempfile.NamedTemporaryFile()
     hypothesis_file.write("\n".join(hypotheses).encode("utf-8"))
     hypothesis_file.write(b"\n")
     hypothesis_file.flush()
     reference_file = tempfile.NamedTemporaryFile(delete=False)
+    # reference_file = tempfile.NamedTemporaryFile()
     reference_file.write("\n".join(references).encode("utf-8"))
     reference_file.write(b"\n")
     reference_file.flush()
@@ -117,6 +119,7 @@ def moses_multi_bleu(hypotheses, references, lowercase=False):
         try:
             # bleu_out = subprocess.check_output(bleu_cmd, stdin=read_pred, stderr=subprocess.STDOUT)
             # bleu_out = bleu_out.decode("utf-8")
+            # bleu_score = re.search(r"BLEU = (.+?),", bleu_out).group(1)
             bleu_cmd  = "perl {} {} < {} > {}".format(multi_bleu_path, reference_file.name, hypothesis_file.name, "temp")
             os.system(bleu_cmd)
             bleu_score_report = open("temp", "r").read()
@@ -667,3 +670,20 @@ def embedding_metric(ground_truth, samples, method='average'):
         return np.mean(np.array(sim_list))
     else:
         raise NotImplementedError
+  
+
+def save_preds(pred_path, context_list, ref_list, hyp_list):
+    """
+    存储预测的句子
+    Args:
+        pred_path: str 存储路径
+        context_list: list 上下文
+        ref_list: list 真实结果列表
+        hyp_list: list 预测结果列表
+    """
+    with open(pred_path, 'w', encoding='utf-8') as f:
+        for context, target, pred in zip(context_list, ref_list, hyp_list):
+            f.write("- context: " + context + '\n')
+            f.write("- reference: " + target + "\n")
+            f.write("- hypothesis: " + pred + "\n")
+            f.write('\n')
