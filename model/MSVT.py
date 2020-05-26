@@ -23,7 +23,7 @@ from model.common_layer import (DecoderLayer, EncoderLayer, LabelSmoothing,
                                 _gen_timing_signal, _get_attn_self_mask,
                                 _get_attn_subsequent_mask, gaussian_kld,
                                 get_input_from_batch, get_output_from_batch,
-                                share_embedding, pad)
+                                share_embedding, pad, ACT_basic)
 from utils import config
 
 pp = pprint.PrettyPrinter(indent=1)
@@ -308,14 +308,14 @@ class CvaeTrans(nn.Module):
 
         self.criterion = nn.NLLLoss(ignore_index=config.PAD_idx)
         
-        # if model_file_path:
-        #     print("loading weights")
-        #     state = torch.load(model_file_path, map_location= lambda storage, location: storage)
-        #     self.encoder.load_state_dict(state['encoder_state_dict'])
-        #     #self.r_encoder.load_state_dict(state['r_encoder_state_dict'])
-        #     self.decoder.load_state_dict(state['decoder_state_dict'])
-        #     self.generator.load_state_dict(state['generator_dict'])
-        #     self.embedding.load_state_dict(state['embedding_dict'])
+        if model_file_path:
+            print("loading weights")
+            state = torch.load(model_file_path, map_location= lambda storage, location: storage)
+            self.encoder.load_state_dict(state['encoder_state_dict'])
+            #self.r_encoder.load_state_dict(state['r_encoder_state_dict'])
+            self.decoder.load_state_dict(state['decoder_state_dict'])
+            self.generator.load_state_dict(state['generator_dict'])
+            self.embedding.load_state_dict(state['embedding_dict'])
             
         if (config.USE_CUDA):
             self.cuda()
@@ -377,8 +377,7 @@ class CvaeTrans(nn.Module):
         start = torch.cumsum(torch.cat((enc_lens.data.new(1).zero_(), enc_lens[:-1])), 0)
         word_encoder_hidden = torch.stack([pad(word_encoder_hidden.narrow(0, s, l), max_len)
                                             for s, l in zip(start.data.tolist(), enc_lens.data.tolist())], 0)
-        # mask_src = ~(enc_padding_mask.bool()).unsqueeze(1)
-        mask_src = (1 - enc_padding_mask.byte()).unsqueeze(1)
+        mask_src = ~(enc_padding_mask.bool()).unsqueeze(1)
 
         # context level encoder
         if word_encoder_hidden.size(-1) != config.hidden_dim:
@@ -497,8 +496,7 @@ class CvaeTrans(nn.Module):
         start = torch.cumsum(torch.cat((enc_lens.data.new(1).zero_(), enc_lens[:-1])), 0)
         word_encoder_hidden = torch.stack([pad(word_encoder_hidden.narrow(0, s, l), max_len)
                                             for s, l in zip(start.data.tolist(), enc_lens.data.tolist())], 0)
-        # mask_src = ~(enc_padding_mask.bool()).unsqueeze(1)
-        mask_src = (1 - enc_padding_mask.byte()).unsqueeze(1)
+        mask_src = ~(enc_padding_mask.bool()).unsqueeze(1)
 
         # context level encoder
         if word_encoder_hidden.size(-1) != config.hidden_dim:
