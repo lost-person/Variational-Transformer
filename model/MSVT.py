@@ -377,7 +377,8 @@ class CvaeTrans(nn.Module):
         start = torch.cumsum(torch.cat((enc_lens.data.new(1).zero_(), enc_lens[:-1])), 0)
         word_encoder_hidden = torch.stack([pad(word_encoder_hidden.narrow(0, s, l), max_len)
                                             for s, l in zip(start.data.tolist(), enc_lens.data.tolist())], 0)
-        mask_src = ~(enc_padding_mask.bool()).unsqueeze(1)
+        # mask_src = ~(enc_padding_mask.bool()).unsqueeze(1)
+        mask_src = (1 - enc_padding_mask.byte()).unsqueeze(1)
 
         # context level encoder
         if word_encoder_hidden.size(-1) != config.hidden_dim:
@@ -496,7 +497,8 @@ class CvaeTrans(nn.Module):
         start = torch.cumsum(torch.cat((enc_lens.data.new(1).zero_(), enc_lens[:-1])), 0)
         word_encoder_hidden = torch.stack([pad(word_encoder_hidden.narrow(0, s, l), max_len)
                                             for s, l in zip(start.data.tolist(), enc_lens.data.tolist())], 0)
-        mask_src = ~(enc_padding_mask.bool()).unsqueeze(1)
+        # mask_src = ~(enc_padding_mask.bool()).unsqueeze(1)
+        mask_src = (1 - enc_padding_mask.byte()).unsqueeze(1)
 
         # context level encoder
         if word_encoder_hidden.size(-1) != config.hidden_dim:

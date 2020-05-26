@@ -4,6 +4,8 @@ from model.seq2seq import SeqToSeq
 if config.v2:
     from model.SVT import CvaeTrans
 elif config.v3:
+    from model.MSVT import CvaeTrans
+elif config.V4:
     from model.MGVT import CvaeTrans
 else:
     from model.GVT import CvaeTrans
@@ -133,7 +135,7 @@ try:
                     else:
                         if n_iter>10000: break
                 else:
-                    if config.v2:
+                    if config.v2 or config.v3 or config.v4:
                         if n_iter>25000: break
 
 except KeyboardInterrupt:
@@ -145,7 +147,7 @@ model.load_state_dict({ name: weights_best[name] for name in weights_best })
 model.eval()
 model.epoch = 100
 loss_test, ppl_test, kld_test, bow_test, elbo_test, bleu_score_g, average, greedy, extrema, d1, d2, d3 = evaluate(
-    model, data_loader_tst, ty="test", max_dec_step=20)
+    model, data_loader_tst, word2emb, ty="test", max_dec_step=20)
 
 file_summary = config.save_path+"summary.txt"
 with open(file_summary, 'w') as the_file:

@@ -139,6 +139,7 @@ filter = arg.filter
 
 v2 = arg.v2
 v3 = arg.v3
+v4 = arg.v4
 num_var_layers = arg.num_var_layers
 kl_ceiling = arg.kl_ceiling
 aux_ceiling = arg.aux_ceiling
