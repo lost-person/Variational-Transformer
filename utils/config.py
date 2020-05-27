@@ -23,6 +23,8 @@ parser.add_argument("--max_seq_len", type=int, default=20)
 parser.add_argument("--v2", action="store_true")
 parser.add_argument("--v3", action="store_true")
 parser.add_argument("--v4", action="store_true")
+parser.add_argument("--v5", action="store_true")
+parser.add_argument("--v6", action="store_true")
 parser.add_argument("--bidirectional", action="store_true")
 parser.add_argument("--hidden_dim", type=int, default=300)
 parser.add_argument("--emb_dim", type=int, default=300)
@@ -129,7 +131,6 @@ save_path_pretrained = arg.save_path_pretrained
 persona = arg.persona
 test = arg.test
 
-
 full_kl_step = arg.full_kl_step
 ### transformer 
 hop = arg.hop
@@ -140,6 +141,8 @@ filter = arg.filter
 v2 = arg.v2
 v3 = arg.v3
 v4 = arg.v4
+v5 = arg.v5
+v6 = arg.v6
 num_var_layers = arg.num_var_layers
 kl_ceiling = arg.kl_ceiling
 aux_ceiling = arg.aux_ceiling

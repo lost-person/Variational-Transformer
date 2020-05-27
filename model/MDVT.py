@@ -13,18 +13,49 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from sklearn.metrics import accuracy_score
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from tqdm import tqdm
 
-from model.common_layer import (
-    ACT_basic, DecoderLayer, EncoderLayer, LabelSmoothing, LayerNorm,
-    MultiHeadAttention, NoamOpt, PositionwiseFeedForward, SoftmaxOutputLayer,
-    VarDecoderLayer, _gen_bias_mask, _gen_timing_signal, _get_attn_self_mask,
-    _get_attn_subsequent_mask, gaussian_kld, get_input_from_batch,
-    get_output_from_batch, share_embedding, pad)
+from model.common_layer import (DecoderLayer, EncoderLayer, LabelSmoothing,
+                                LayerNorm, MultiHeadAttention, NoamOpt,
+                                PositionwiseFeedForward, SoftmaxOutputLayer,
+                                VarDecoderLayer, _gen_bias_mask,
+                                _gen_timing_signal, _get_attn_self_mask,
+                                _get_attn_subsequent_mask, gaussian_kld,
+                                get_input_from_batch, get_output_from_batch,
+                                share_embedding, pad, ACT_basic)
 from utils import config
-from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 pp = pprint.PrettyPrinter(indent=1)
+
+
+def init_rnn_wt(rnn):
+    for names in rnn._all_weights:
+        for name in names:
+            if name.startswith('weight_'):
+                wt = getattr(rnn, name)
+                wt.data.uniform_(-config.rand_unif_init_mag, config.rand_unif_init_mag)
+            elif name.startswith('bias_'):
+                # set forget bias to 1
+                bias = getattr(rnn, name)
+                n = bias.size(0)
+                start, end = n // 4, n // 2
+                bias.data.fill_(0.)
+                bias.data[start:end].fill_(1.)
+
+
+def init_linear_wt(linear):
+    linear.weight.data.normal_(std=config.trunc_norm_init_std)
+    if linear.bias is not None:
+        linear.bias.data.normal_(std=config.trunc_norm_init_std)
+
+
+def init_wt_normal(wt):
+    wt.data.normal_(std=config.trunc_norm_init_std)
+
+
+def init_wt_unif(wt):
+    wt.data.uniform_(-config.rand_unif_init_mag, config.rand_unif_init_mag)
 
 
 class WordEncoder(nn.Module):
@@ -74,7 +105,6 @@ class Encoder(nn.Module):
                  attention_dropout=0.1, relu_dropout=0.1, use_mask=False, universal=False):
         """
         Parameters:
-            embedding_size: Size of embeddings
             hidden_size: Hidden size
             num_layers: Total layers in the Encoder
             num_heads: Number of attention heads
@@ -147,7 +177,7 @@ class Encoder(nn.Module):
         return y
 
 
-class Decoder(nn.Module):
+class VarDecoder(nn.Module):
     """
     A Transformer Decoder module. 
     Inputs should be in the shape [batch_size, length, hidden_size]
@@ -155,7 +185,7 @@ class Decoder(nn.Module):
     Refer Fig.1 in https://arxiv.org/pdf/1706.03762.pdf
     """
     def __init__(self, embedding_size, hidden_size, num_layers, num_heads, total_key_depth, total_value_depth,
-                 filter_size, max_length=200, input_dropout=0, layer_dropout=0, 
+                 filter_size, vocab_size, max_length=200, input_dropout=0, layer_dropout=0, 
                  attention_dropout=0.1, relu_dropout=0.1, universal=False):
         """
         Parameters:
@@ -174,7 +204,7 @@ class Decoder(nn.Module):
             relu_dropout: Dropout probability after relu in FFN (Should be non-zero only during training)
         """
         
-        super(Decoder, self).__init__()
+        super(VarDecoder, self).__init__()
         self.universal = universal
         self.num_layers = num_layers
         self.timing_signal = _gen_timing_signal(max_length, hidden_size)
@@ -184,6 +214,9 @@ class Decoder(nn.Module):
             self.position_signal = _gen_timing_signal(num_layers, hidden_size)
 
         self.mask = _get_attn_subsequent_mask(max_length)
+        if(self.universal):  
+            ## for t
+            self.position_signal = _gen_timing_signal(num_layers, hidden_size)
 
         params =(hidden_size, 
                  total_key_depth or hidden_size,
@@ -191,48 +224,44 @@ class Decoder(nn.Module):
                  filter_size, 
                  num_heads, 
                  _gen_bias_mask(max_length), # mandatory
-                 None,
+                 vocab_size,
                  layer_dropout, 
                  attention_dropout, 
                  relu_dropout)
         
-        if(self.universal):
-            self.dec = DecoderLayer(*params)
-        else:
-            self.dec = nn.Sequential(*[DecoderLayer(*params) for l in range(num_layers)])
+        self.var_dec = nn.Sequential(*[VarDecoderLayer(*params) for l in range(config.num_var_layers)])
+        self.dec = nn.Sequential(*[DecoderLayer(*params) for l in range(num_layers- config.num_var_layers)])
         
         self.embedding_proj = nn.Linear(embedding_size, hidden_size, bias=False)
-        self.layer_norm = LayerNorm(hidden_size)
+        self.layer_norm1 = LayerNorm(hidden_size)
+        self.layer_norm2 = LayerNorm(hidden_size)
         self.input_dropout = nn.Dropout(input_dropout)
 
-    def forward(self, inputs, encoder_output, mask):
-        mask_src, mask_trg = mask
+    def forward(self, inputs, encoder_output, r_encoder_outputs, mask):
+        mask_src, mask_res, mask_trg = mask
         dec_mask = torch.gt(mask_trg.byte() + self.mask[:, :mask_trg.size(-1), :mask_trg.size(-1)], 0)
-        #Add input dropout
+        
+        # Add input dropout
         x = self.input_dropout(inputs)
         x = self.embedding_proj(x)
+        
+        # Add timing signal
+        x += self.timing_signal[:, :inputs.shape[1], :].type_as(inputs.data)
+        
+        # Run decoder
+        y, _, _, attn_dist, _, means, log_vars, logits_probs = self.var_dec((x, encoder_output, r_encoder_outputs, 
+            [], (mask_src, mask_res, dec_mask), {"prior": [], "posterior": []},{"prior": [],"posterior": []},[]))
+        y = self.layer_norm1(y)
+        y, _, attn_dist, _ = self.dec((y, encoder_output, [], (mask_src,dec_mask)))
+        y = self.layer_norm2(y)
+        if r_encoder_outputs is not None:
+            #print(means["prior"].shape)
+            means["prior"] = torch.cat(means["prior"], 0)
+            means["posterior"] = torch.cat(means["posterior"], 0)
+            log_vars["prior"] = torch.cat(log_vars["prior"], 0)
+            log_vars["posterior"] = torch.cat(log_vars["posterior"], 0)
             
-        if(self.universal):
-            if(config.act):
-                x, attn_dist, (self.remainders,self.n_updates) = self.act_fn(x, inputs, self.dec, self.timing_signal, self.position_signal, self.num_layers, encoder_output, decoding=True)
-                y = self.layer_norm(x)
-
-            else:
-                x += self.timing_signal[:, :inputs.shape[1], :].type_as(inputs.data)
-                for l in range(self.num_layers):
-                    x += self.position_signal[:, l, :].unsqueeze(1).repeat(1,inputs.shape[1],1).type_as(inputs.data)
-                    x, _, attn_dist, _ = self.dec((x, encoder_output, [], (mask_src,dec_mask)))
-                y = self.layer_norm(x)
-        else:
-            # Add timing signal
-            x += self.timing_signal[:, :inputs.shape[1], :].type_as(inputs.data)
-            
-            # Run decoder
-            y, _, attn_dist, _ = self.dec((x, encoder_output, [], (mask_src,dec_mask)))
-
-            # Final layer normalization
-            y = self.layer_norm(y)
-        return y, attn_dist
+        return y, attn_dist, means, log_vars, logits_probs
 
 
 class Generator(nn.Module):
@@ -265,43 +294,6 @@ class Generator(nn.Module):
             return F.log_softmax(logit,dim=-1)
 
 
-class Latent(nn.Module):
-    def __init__(self, is_eval):
-        super(Latent, self).__init__()
-        self.mean = PositionwiseFeedForward(config.hidden_dim, config.filter, config.hidden_dim,
-                                                                 layer_config='lll', padding = 'left', 
-                                                                 dropout=0)
-        self.var = PositionwiseFeedForward(config.hidden_dim, config.filter, config.hidden_dim,
-                                                                 layer_config='lll', padding = 'left', 
-                                                                 dropout=0)
-        self.mean_p = PositionwiseFeedForward(config.hidden_dim*2, config.filter, config.hidden_dim,
-                                                                 layer_config='lll', padding = 'left', 
-                                                                 dropout=0)
-        self.var_p = PositionwiseFeedForward(config.hidden_dim*2, config.filter, config.hidden_dim,
-                                                                 layer_config='lll', padding = 'left', 
-                                                                 dropout=0)
-        self.is_eval = is_eval
-
-    def forward(self, x, x_p, train=True):
-        mean = self.mean(x)
-        log_var = self.var(x)
-        eps = torch.randn(x.size())
-        std = torch.exp(0.5 * log_var)
-        if config.USE_CUDA: eps = eps.cuda()
-        z = eps * std + mean
-        kld_loss = 0
-        if x_p is not None:
-            mean_p = self.mean_p(torch.cat((x_p,x),dim=-1))
-            log_var_p = self.var_p(torch.cat((x_p,x),dim=-1))
-            kld_loss = gaussian_kld(mean_p,log_var_p,mean,log_var)
-            kld_loss = torch.mean(kld_loss)
-        if train:
-            std = torch.exp(0.5 * log_var_p)
-            if config.USE_CUDA: eps = eps.cuda()
-            z = eps * std + mean_p
-        return kld_loss, z
-
-
 class CvaeTrans(nn.Module):
 
     def __init__(self, vocab, emo_number,  model_file_path=None, is_eval=False, load_optim=False):
@@ -309,42 +301,39 @@ class CvaeTrans(nn.Module):
         self.vocab = vocab
         self.vocab_size = vocab.n_words
 
-        self.embedding = share_embedding(self.vocab,config.pretrain_emb)
+        self.embedding = share_embedding(self.vocab, pretrain=False)
         
         self.word_encoder = WordEncoder(config.emb_dim, config.hidden_dim, config.bidirectional)
-        self.linear = nn.Linear(2 * config.hidden_dim, config.hidden_dim)
-        
         self.encoder = Encoder(config.hidden_dim, num_layers=config.hop, num_heads=config.heads, 
                                 total_key_depth=config.depth, total_value_depth=config.depth,
-                                filter_size=config.filter,universal=config.universal)
-        
+                                filter_size=config.filter, universal=config.universal)
         self.r_encoder = Encoder(config.hidden_dim, num_layers=config.hop, num_heads=config.heads, 
                                 total_key_depth=config.depth, total_value_depth=config.depth,
-                                filter_size=config.filter,universal=config.universal)
-        self.decoder = Decoder(config.emb_dim, hidden_size = config.hidden_dim,  num_layers=config.hop, num_heads=config.heads, 
-                                    total_key_depth=config.depth,total_value_depth=config.depth,
-                                    filter_size=config.filter)
-        self.latent_layer = Latent(is_eval)
-        self.bow = SoftmaxOutputLayer(config.hidden_dim,self.vocab_size)
+                                filter_size=config.filter, universal=config.universal)
+        
+        self.decoder = VarDecoder(config.emb_dim, hidden_size=config.hidden_dim, num_layers=config.hop, 
+                                num_heads=config.heads, total_key_depth=config.depth, total_value_depth=config.depth, 
+                                filter_size=config.filter, vocab_size=self.vocab_size)
+
         self.generator = Generator(config.hidden_dim, self.vocab_size)
+
+        self.linear = nn.Linear(2 * config.hidden_dim, config.hidden_dim)
 
         if config.weight_sharing:
             # Share the weight matrix between target word embedding & the final logit dense layer
             self.generator.proj.weight = self.embedding.lut.weight
 
         self.criterion = nn.NLLLoss(ignore_index=config.PAD_idx)
- 
-
+        
         if model_file_path:
             print("loading weights")
             state = torch.load(model_file_path, map_location= lambda storage, location: storage)
             self.encoder.load_state_dict(state['encoder_state_dict'])
-            self.r_encoder.load_state_dict(state['r_encoder_state_dict'])
+            #self.r_encoder.load_state_dict(state['r_encoder_state_dict'])
             self.decoder.load_state_dict(state['decoder_state_dict'])
             self.generator.load_state_dict(state['generator_dict'])
             self.embedding.load_state_dict(state['embedding_dict'])
-            self.latent_layer.load_state_dict(state['latent_dict'])
-            self.bow.load_state_dict(state['bow'])
+            
         if (config.USE_CUDA):
             self.cuda()
         if is_eval:
@@ -370,12 +359,10 @@ class CvaeTrans(nn.Module):
         state = {
             'iter': iter,
             'encoder_state_dict': self.encoder.state_dict(),
-            'r_encoder_state_dict': self.r_encoder.state_dict(),
+            #'r_encoder_state_dict': self.r_encoder.state_dict(),
             'decoder_state_dict': self.decoder.state_dict(),
             'generator_dict': self.generator.state_dict(),
             'embedding_dict': self.embedding.state_dict(),
-            'latent_dict': self.latent_layer.state_dict(),
-            'bow': self.bow.state_dict(),
             'optimizer': self.optimizer.state_dict(),
             'current_loss': running_avg_ppl
         }
@@ -420,10 +407,6 @@ class CvaeTrans(nn.Module):
         if word_encoder_hidden.size(-1) != config.hidden_dim:
             word_encoder_hidden = self.linear(word_encoder_hidden)
         encoder_outputs = self.encoder(word_encoder_hidden, mask_src)
-        
-        #latent variable
-        if config.model=="cvaetrs":
-            kld_loss, z = self.latent_layer(encoder_outputs[:,0], r_encoder_outputs[:,0], train=True)
 
         # Decode
         sos_token = torch.LongTensor([config.SOS_idx] * batch_size).unsqueeze(1)
@@ -431,45 +414,96 @@ class CvaeTrans(nn.Module):
 
         dec_batch_shift = torch.cat((sos_token, dec_batch[:, :-1]), 1) #(batch, len, embedding)
         mask_trg = dec_batch_shift.data.eq(config.PAD_idx).unsqueeze(1)
-        input_vector = self.embedding(dec_batch_shift)
-        if config.model=="cvaetrs":
-            input_vector[:,0] = input_vector[:,0] + z 
-        else:
-            input_vector[:,0] = input_vector[:,0] 
-        pre_logit, attn_dist = self.decoder(input_vector,encoder_outputs, (mask_src,mask_trg))
+        dec_emb = self.embedding(dec_batch_shift)
+
+        pre_logit, attn_dist, mean, log_var, probs = self.decoder(dec_emb, encoder_outputs, r_encoder_outputs, 
+                                                                    (mask_src, mask_res, mask_trg))
         
         ## compute output dist
-        logit = self.generator(pre_logit,attn_dist,enc_batch_extend_vocab if config.pointer_gen else None, extra_zeros, attn_dist_db=None)
+        logit = self.generator(pre_logit, attn_dist, enc_batch_extend_vocab if config.pointer_gen else None, extra_zeros, attn_dist_db=None)
         ## loss: NNL if ptr else Cross entropy
+        sbow = dec_batch #[batch, seq_len]
+        seq_len = sbow.size(1)
         loss_rec = self.criterion(logit.contiguous().view(-1, logit.size(-1)), dec_batch.contiguous().view(-1))
         if config.model=="cvaetrs":
-            z_logit = self.bow(z) # [batch_size, vocab_size]
-            z_logit = z_logit.unsqueeze(1).repeat(1,logit.size(1),1)
-            loss_aux = self.criterion(z_logit.contiguous().view(-1, z_logit.size(-1)), dec_batch.contiguous().view(-1))
+            loss_aux = 0
+            for prob in probs:
+                sbow_mask = _get_attn_subsequent_mask(seq_len).transpose(1,2)
+                sbow.unsqueeze(2).repeat(1,1,seq_len).masked_fill_(sbow_mask,config.PAD_idx)#[batch, seq_len, seq_len]
 
-            #kl_weight = min(iter/config.full_kl_step, 0.28) if config.full_kl_step >0 else 1.0
+                loss_aux+= self.criterion(prob.contiguous().view(-1, prob.size(-1)), sbow.contiguous().view(-1))
+            kld_loss = gaussian_kld(mean["posterior"], log_var["posterior"],mean["prior"], log_var["prior"])
+            kld_loss = torch.mean(kld_loss)
             kl_weight = min(math.tanh(6 * iter/config.full_kl_step - 3) + 1, 1)
+            #kl_weight = min(iter/config.full_kl_step, 1) if config.full_kl_step >0 else 1.0
             loss = loss_rec + config.kl_ceiling * kl_weight*kld_loss + config.aux_ceiling*loss_aux
-
-            aux = loss_aux.item()
-            elbo = loss_rec+kld_loss
+            elbo = loss_rec + kld_loss
         else:
             loss = loss_rec
             elbo = loss_rec
             kld_loss = torch.Tensor([0])
-            aux = 0
-            if config.multitask:
-                emo_logit = self.emo(encoder_outputs[:,0])
-                emo_loss = self.emo_criterion(emo_logit, batch["program_label"]-9)
-                loss = loss_rec+emo_loss
+            loss_aux = torch.Tensor([0])
         if(train):
             loss.backward()
             # clip gradient
             nn.utils.clip_grad_norm_(self.parameters(), config.max_grad_norm)
             self.optimizer.step()
 
-        return loss_rec.item(), math.exp(min(loss_rec.item(), 100)), kld_loss.item(), aux, elbo.item()
+        return loss_rec.item(), math.exp(min(loss_rec.item(), 100)), kld_loss.item(), loss_aux.item(), elbo.item()
 
+    def train_n_batch(self, batchs, iter, train=True):
+        if(config.noam):
+            self.optimizer.optimizer.zero_grad()
+        else:
+            self.optimizer.zero_grad()
+        for batch in batchs:
+            enc_batch, _, _, enc_batch_extend_vocab, extra_zeros, _, _ = get_input_from_batch(batch)
+            dec_batch, _, _, _, _ = get_output_from_batch(batch)
+            ## Encode
+            mask_src = enc_batch.data.eq(config.PAD_idx).unsqueeze(1)
+            encoder_outputs = self.encoder(self.embedding(enc_batch), mask_src)
+
+            meta = self.embedding(batch["program_label"])
+            if config.dataset=="empathetic":
+                meta = meta-meta
+            # Decode
+            sos_token = torch.LongTensor([config.SOS_idx] * enc_batch.size(0)).unsqueeze(1)
+            if config.USE_CUDA: sos_token = sos_token.cuda()
+            dec_batch_shift = torch.cat((sos_token,dec_batch[:, :-1]),1)
+
+            mask_trg = dec_batch_shift.data.eq(config.PAD_idx).unsqueeze(1)
+
+            pre_logit, attn_dist, mean, log_var, probs= self.decoder(self.embedding(dec_batch_shift)+meta.unsqueeze(1),encoder_outputs, True, (mask_src,mask_trg))
+            ## compute output dist
+            logit = self.generator(pre_logit,attn_dist,enc_batch_extend_vocab if config.pointer_gen else None, extra_zeros, attn_dist_db=None)
+            ## loss: NNL if ptr else Cross entropy
+            sbow = dec_batch #[batch, seq_len]
+            seq_len = sbow.size(1)
+            loss_rec = self.criterion(logit.contiguous().view(-1, logit.size(-1)), dec_batch.contiguous().view(-1))
+            if config.model=="cvaetrs":
+                loss_aux = 0
+                for prob in probs:
+                    sbow_mask = _get_attn_subsequent_mask(seq_len).transpose(1,2)
+                    sbow.unsqueeze(2).repeat(1,1,seq_len).masked_fill_(sbow_mask,config.PAD_idx)#[batch, seq_len, seq_len]
+
+                    loss_aux+= self.criterion(prob.contiguous().view(-1, prob.size(-1)), sbow.contiguous().view(-1))
+                kld_loss = gaussian_kld(mean["posterior"], log_var["posterior"],mean["prior"], log_var["prior"])
+                kld_loss = torch.mean(kld_loss)
+                kl_weight = min(math.tanh(6 * iter/config.full_kl_step - 3) + 1, 1)
+                #kl_weight = min(iter/config.full_kl_step, 1) if config.full_kl_step >0 else 1.0
+                loss = loss_rec + config.kl_ceiling * kl_weight*kld_loss + config.aux_ceiling*loss_aux
+                elbo = loss_rec+kld_loss
+            else:
+                loss = loss_rec
+                elbo = loss_rec
+                kld_loss = torch.Tensor([0])
+                loss_aux = torch.Tensor([0])
+            loss.backward()
+            # clip gradient
+        nn.utils.clip_grad_norm_(self.parameters(), config.max_grad_norm)
+        self.optimizer.step()
+
+        return loss_rec.item(), math.exp(min(loss_rec.item(), 100)), kld_loss.item(), loss_aux.item(), elbo.item()
 
     def decoder_greedy(self, batch, max_dec_step=50):
         enc_batch, enc_padding_mask, enc_lens, enc_batch_extend_vocab, extra_zeros, _, _ = get_input_from_batch(batch)
@@ -489,18 +523,13 @@ class CvaeTrans(nn.Module):
         start = torch.cumsum(torch.cat((enc_lens.data.new(1).zero_(), enc_lens[:-1])), 0)
         word_encoder_hidden = torch.stack([pad(word_encoder_hidden.narrow(0, s, l), max_len)
                                             for s, l in zip(start.data.tolist(), enc_lens.data.tolist())], 0)
-        
-        # mask_src = ~(enc_padding_mask.bool()).unsqueeze(1)
-        mask_src = (1 - enc_padding_mask.byte()).unsqueeze(1)
-        
+        mask_src = ~(enc_padding_mask.bool()).unsqueeze(1)
+
         # context level encoder
         if word_encoder_hidden.size(-1) != config.hidden_dim:
             word_encoder_hidden = self.linear(word_encoder_hidden)
         encoder_outputs = self.encoder(word_encoder_hidden, mask_src)
         
-        if config.model=="cvaetrs":
-            kld_loss, z = self.latent_layer(encoder_outputs, None, train=False)
-
         ys = torch.ones(batch_size, 1).fill_(config.SOS_idx).long()
         if config.USE_CUDA:
             ys = ys.cuda()
@@ -508,12 +537,8 @@ class CvaeTrans(nn.Module):
         
         decoded_words = []
         for i in range(max_dec_step+1):
-            input_vector = self.embedding(ys)
-            if config.model=="cvaetrs":
-                input_vector[:,0] = input_vector[:,0] + z
-            else:
-                input_vector[:,0] = input_vector[:,0]
-            out, attn_dist= self.decoder(input_vector,encoder_outputs, (mask_src, mask_trg))
+
+            out, attn_dist, _, _,_ = self.decoder(self.embedding(ys), encoder_outputs, None, (mask_src, None, mask_trg))
             
             prob = self.generator(out,attn_dist,enc_batch_extend_vocab, extra_zeros, attn_dist_db=None)
             _, next_word = torch.max(prob[:, -1], dim = 1)

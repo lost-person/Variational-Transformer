@@ -5,8 +5,12 @@ if config.v2:
     from model.SVT import CvaeTrans
 elif config.v3:
     from model.MSVT import CvaeTrans
-elif config.V4:
+elif config.v4:
     from model.MGVT import CvaeTrans
+elif config.v5:
+    from model.MTVT import CvaeTrans
+elif config.v6:
+    from model.MDVT import CvaeTrans
 else:
     from model.GVT import CvaeTrans
 from model.common_layer import evaluate,evaluate_tra, count_parameters, make_infinite, get_kld
@@ -62,7 +66,7 @@ elif(config.model == "cvaenad"):
 print("MODEL USED",config.model)
 print("TRAINABLE PARAMETERS",count_parameters(model))
 
-check_iter = 1000 if config.dataset=="empathetic" else 1000
+check_iter = 1000 if config.dataset=="empathetic" else 100
 if config.persona:
     check_iter = 1000
 

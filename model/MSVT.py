@@ -239,7 +239,7 @@ class VarDecoder(nn.Module):
         x += self.timing_signal[:, :inputs.shape[1], :].type_as(inputs.data)
 
         # Run decoder
-        y, _, _, attn_dist, _ , means, log_vars, logits_probs= self.vardec((x, encoder_output, posterior, [], (mask_src,dec_mask,dec_mask_p),{"prior":[],"posterior":[]},{"prior":[],"posterior":[]},[]))
+        y, _, _, attn_dist, _ , means, log_vars, logits_probs = self.vardec((x, encoder_output, posterior, [], (mask_src,dec_mask,dec_mask_p),{"prior":[],"posterior":[]},{"prior":[],"posterior":[]},[]))
         y = self.layer_norm_1(y)
         y, _, attn_dist, _ = self.dec((y, encoder_output, [], (mask_src,dec_mask)))
         y = self.layer_norm_2(y)
@@ -296,9 +296,9 @@ class CvaeTrans(nn.Module):
                                 total_key_depth=config.depth, total_value_depth=config.depth,
                                 filter_size=config.filter,universal=config.universal)
         
-        self.decoder = VarDecoder(config.emb_dim, hidden_size = config.hidden_dim,  num_layers=config.hop, num_heads=config.heads, 
-                                total_key_depth=config.depth,total_value_depth=config.depth,
-                                filter_size=config.filter, vocab_size = self.vocab_size)
+        self.decoder = VarDecoder(config.emb_dim, hidden_size=config.hidden_dim, num_layers=config.hop, 
+                                num_heads=config.heads, total_key_depth=config.depth, total_value_depth=config.depth,
+                                filter_size=config.filter, vocab_size=self.vocab_size)
 
         self.generator = Generator(config.hidden_dim, self.vocab_size)
 
@@ -391,7 +391,7 @@ class CvaeTrans(nn.Module):
 
         mask_trg = dec_batch_shift.data.eq(config.PAD_idx).unsqueeze(1)
 
-        pre_logit, attn_dist, mean, log_var, probs= self.decoder(self.embedding(dec_batch_shift), encoder_outputs, True, (mask_src, mask_trg))
+        pre_logit, attn_dist, mean, log_var, probs = self.decoder(self.embedding(dec_batch_shift), encoder_outputs, True, (mask_src, mask_trg))
         ## compute output dist
         logit = self.generator(pre_logit, attn_dist, enc_batch_extend_vocab if config.pointer_gen else None, extra_zeros, attn_dist_db=None)
         ## loss: NNL if ptr else Cross entropy

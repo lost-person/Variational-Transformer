@@ -177,7 +177,7 @@ class VarDecoderLayer(nn.Module):
     NOTE: The layer normalization step has been moved to the input as per latest version of T2T
     """
     def __init__(self, hidden_size, total_key_depth, total_value_depth, filter_size, num_heads,
-                 bias_mask,vocab_size , layer_dropout=0.1, attention_dropout=0.1, relu_dropout=0.1):
+                 bias_mask, vocab_size, layer_dropout=0.1, attention_dropout=0.1, relu_dropout=0.1):
         """
         Parameters:
             hidden_size: Hidden size
@@ -290,7 +290,7 @@ class VarDecoderLayer(nn.Module):
         y = self.dropout(x + y)
         
         # Return encoder outputs as well to work with nn.Sequential
-        return y, encoder_outputs, encoder_outputs_p, attention_weight, mask, means,log_vars, logits_probs
+        return y, encoder_outputs, encoder_outputs_p, attention_weight, mask, means, log_vars, logits_probs
 
 
 class VarDecoderLayer1(nn.Module):
@@ -418,7 +418,7 @@ class VarDecoderLayer1(nn.Module):
         y = self.dropout(x + y)
         
         # Return encoder outputs as well to work with nn.Sequential
-        return y, encoder_outputs, posterior, attention_weight, mask, means,log_vars, logits_probs
+        return y, encoder_outputs, posterior, attention_weight, mask, means, log_vars, logits_probs
 
 class MultiHeadAttention(nn.Module):
     """
@@ -627,6 +627,8 @@ class LayerNorm(nn.Module):
         mean = x.mean(-1, keepdim=True)
         std = x.std(-1, keepdim=True)
         return self.gamma * (x - mean) / (std + self.eps) + self.beta
+
+
 class SoftmaxOutputLayer(nn.Module):
     "Define standard linear + softmax generation step."
     def __init__(self, d_model, vocab):
@@ -696,9 +698,6 @@ def _get_attn_self_mask(batch_size,size):
         return self_mask.cuda()
     else:
         return self_mask
-
-
-
 
 
 def position_encoding(sentence_size, embedding_dim):
