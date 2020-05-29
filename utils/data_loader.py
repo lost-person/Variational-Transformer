@@ -187,16 +187,19 @@ def prepare_data_seq(batch_size=32):
     dataset_train = Dataset(pairs_tra, vocab)
     data_loader_tra = torch.utils.data.DataLoader(dataset=dataset_train,
                                                  batch_size=batch_size,
-                                                 shuffle=True, collate_fn=collate_fn)
+                                                 shuffle=True, collate_fn=collate_fn,
+                                                 drop_last=True)
 
     dataset_valid = Dataset(pairs_val, vocab)
     data_loader_val = torch.utils.data.DataLoader(dataset=dataset_valid,
                                                  batch_size=batch_size,
-                                                 shuffle=True, collate_fn=collate_fn)
+                                                 shuffle=True, collate_fn=collate_fn,
+                                                 drop_last=True)
     #print('val len:',len(dataset_valid))
     dataset_test = Dataset(pairs_tst, vocab)
     data_loader_tst = torch.utils.data.DataLoader(dataset=dataset_test,
                                                  batch_size=1,
-                                                 shuffle=False, collate_fn=collate_fn)
+                                                 shuffle=False, collate_fn=collate_fn,
+                                                 drop_last=True)
     write_config()
     return data_loader_tra, data_loader_val, data_loader_tst, vocab, len(dataset_train.emo_map)
